@@ -1,0 +1,68 @@
+# Secrets
+.env
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Logs — generated at runtime, not versioned
+logs/*.log
+logs/*.jsonl
+
+# Cache stores — large, runtime-generated
+data/cache/
+
+# Checkpoints — runtime-generated, not versioned
+checkpoints/*.parquet
+checkpoints/*.pkl
+checkpoints/*.tmp
+
+# Outputs — generated artifacts
+outputs/analysis_*.json
+outputs/viz/*.png
+outputs/validation_report.md
+
+# Raw dataset — fetched at runtime
+data/raw/billboard_top100.json
+
+# Model artifacts — downloaded by transformers/spaCy at runtime
+# Do not version model weights
+*.bin
+*.safetensors
+*.pt
+*.onnx
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Pre-commit
+.pre-commit-config.yaml artifacts
+```
