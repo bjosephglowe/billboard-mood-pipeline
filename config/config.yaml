@@ -1,0 +1,94 @@
+# ── Project scope ────────────────────────────────────────────────
+project:
+  name: billboard-mood-pipeline
+  version: "0.1.0"
+  year_range: [1990, 1999] # validation tier: 1990s decade
+  full_year_range: [1958, 2024] # future full run
+  top_n: 10 # Billboard Top N per year
+
+# ── Dataset ──────────────────────────────────────────────────────
+dataset:
+  github_url: "https://raw.githubusercontent.com/KorbenD/billboard-top-100/master/data/chart_data.json"
+  commit_sha: "" # pin to specific commit SHA before production run
+  local_path: "data/raw/billboard_top100.json"
+
+# ── Lyrics ───────────────────────────────────────────────────────
+lyrics:
+  genius_sleep_time: 0.5 # seconds between Genius requests
+  musixmatch_truncation_flag: true # always flag truncated lyrics
+  cache_enabled: true
+
+# ── Models ───────────────────────────────────────────────────────
+models:
+  sentiment: "cardiffnlp/twitter-roberta-base-sentiment-latest"
+  mood: "j-hartmann/emotion-english-distilroberta-base"
+  theme: "cross-encoder/nli-MiniLM-L6-v2"
+  semantic_embedding: "sentence-transformers/all-MiniLM-L6-v2"
+
+# ── Inference ─────────────────────────────────────────────────────
+inference:
+  batch_size: 16 # reduce to 8 if thermal issues observed
+  sleep_between_batches: 0.5 # seconds — thermal management
+  device: "auto" # auto = MPS if available, else CPU
+  cache_enabled: true
+
+# ── Theme classification ──────────────────────────────────────────
+theme:
+  min_confidence: 0.55 # locked in P2 amendment
+  haiku_fallback_enabled: true
+  semantic_vector_enabled: false # optional field — disabled for validation run
+
+# ── Jungian ───────────────────────────────────────────────────────
+jungian:
+  haiku_model: "claude-haiku-3-20240307"
+  max_retries: 2
+  retry_sleep: 2.0 # seconds between retries
+
+# ── Semantic analysis ─────────────────────────────────────────────
+semantic:
+  tfidf_max_features: 5000
+  tfidf_top_k_keywords: 10
+  subject_focus_min_pronouns: 5 # minimum pronoun count for non-unknown result
+  mtld_min_tokens: 50 # minimum token count for MTLD reliability
+
+# ── Cache ─────────────────────────────────────────────────────────
+cache:
+  lyrics_dir: "data/cache/lyrics"
+  inference_dir: "data/cache/inference"
+
+# ── Checkpoints ───────────────────────────────────────────────────
+checkpoints:
+  dir: "checkpoints"
+  force_rerun:
+    s1_ingest: false
+    s2_lyrics: false
+    s3_sentiment: false
+    s3_mood: false
+    s3_theme: false
+    s3_jungian: false
+    s3_semantic: false # invalidates corpus + semantic parquet + all downstream
+    s4_merge: false
+    s5_report: false
+
+# ── Logging ───────────────────────────────────────────────────────
+logging:
+  log_dir: "logs"
+  level: "INFO" # DEBUG for development, INFO for runs
+  missing_lyrics_log: "logs/missing_lyrics.jsonl"
+  low_confidence_log: "logs/low_confidence.jsonl"
+
+# ── Outputs ───────────────────────────────────────────────────────
+outputs:
+  dir: "outputs"
+  viz_dir: "outputs/viz"
+  report_filename: "validation_report.md"
+  analysis_filename: "analysis_{decade}.json"
+
+# ── Validation thresholds ─────────────────────────────────────────
+validation:
+  min_lyrics_coverage: 0.85
+  min_sentiment_coverage: 0.85
+  min_theme_coverage: 0.75
+  min_jungian_coverage: 0.60
+  max_low_confidence_theme_rate: 0.25
+  min_semantic_coverage: 0.85
