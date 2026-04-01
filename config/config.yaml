@@ -2,20 +2,20 @@
 project:
   name: billboard-mood-pipeline
   version: "0.1.0"
-  year_range: [1990, 1999] # validation tier: 1990s decade
-  full_year_range: [1958, 2024] # future full run
-  top_n: 10 # Billboard Top N per year
+  year_range: [1990, 1999]
+  full_year_range: [1958, 2024]
+  top_n: 10
 
 # ── Dataset ──────────────────────────────────────────────────────
 dataset:
   github_url: "https://raw.githubusercontent.com/KorbenD/billboard-top-100/master/data/chart_data.json"
-  commit_sha: "" # pin to specific commit SHA before production run
+  commit_sha: ""
   local_path: "data/raw/billboard_top100.json"
 
 # ── Lyrics ───────────────────────────────────────────────────────
 lyrics:
-  genius_sleep_time: 0.5 # seconds between Genius requests
-  musixmatch_truncation_flag: true # always flag truncated lyrics
+  genius_sleep_time: 0.5
+  musixmatch_truncation_flag: true
   cache_enabled: true
 
 # ── Models ───────────────────────────────────────────────────────
@@ -25,38 +25,38 @@ models:
   theme: "cross-encoder/nli-MiniLM-L6-v2"
   semantic_embedding: "sentence-transformers/all-MiniLM-L6-v2"
 
-# ── Inference ─────────────────────────────────────────────────────
+# ── Inference ────────────────────────────────────────────────────
 inference:
-  batch_size: 16 # reduce to 8 if thermal issues observed
-  sleep_between_batches: 0.5 # seconds — thermal management
-  device: "auto" # auto = MPS if available, else CPU
+  batch_size: 16
+  sleep_between_batches: 0.5
+  device: "auto"
   cache_enabled: true
 
-# ── Theme classification ──────────────────────────────────────────
+# ── Theme classification ─────────────────────────────────────────
 theme:
-  min_confidence: 0.55 # locked in P2 amendment
+  min_confidence: 0.55
   haiku_fallback_enabled: true
-  semantic_vector_enabled: false # optional field — disabled for validation run
+  semantic_vector_enabled: false
 
-# ── Jungian ───────────────────────────────────────────────────────
+# ── Jungian ──────────────────────────────────────────────────────
 jungian:
   haiku_model: "claude-haiku-3-20240307"
   max_retries: 2
-  retry_sleep: 2.0 # seconds between retries
+  retry_sleep: 2.0
 
-# ── Semantic analysis ─────────────────────────────────────────────
+# ── Semantic analysis ────────────────────────────────────────────
 semantic:
   tfidf_max_features: 5000
   tfidf_top_k_keywords: 10
-  subject_focus_min_pronouns: 5 # minimum pronoun count for non-unknown result
-  mtld_min_tokens: 50 # minimum token count for MTLD reliability
+  subject_focus_min_pronouns: 5
+  mtld_min_tokens: 50
 
-# ── Cache ─────────────────────────────────────────────────────────
+# ── Cache ────────────────────────────────────────────────────────
 cache:
   lyrics_dir: "data/cache/lyrics"
   inference_dir: "data/cache/inference"
 
-# ── Checkpoints ───────────────────────────────────────────────────
+# ── Checkpoints ──────────────────────────────────────────────────
 checkpoints:
   dir: "checkpoints"
   force_rerun:
@@ -66,25 +66,25 @@ checkpoints:
     s3_mood: false
     s3_theme: false
     s3_jungian: false
-    s3_semantic: false # invalidates corpus + semantic parquet + all downstream
+    s3_semantic: false
     s4_merge: false
     s5_report: false
 
-# ── Logging ───────────────────────────────────────────────────────
+# ── Logging ──────────────────────────────────────────────────────
 logging:
   log_dir: "logs"
-  level: "INFO" # DEBUG for development, INFO for runs
+  level: "INFO"
   missing_lyrics_log: "logs/missing_lyrics.jsonl"
   low_confidence_log: "logs/low_confidence.jsonl"
 
-# ── Outputs ───────────────────────────────────────────────────────
+# ── Outputs ──────────────────────────────────────────────────────
 outputs:
   dir: "outputs"
   viz_dir: "outputs/viz"
   report_filename: "validation_report.md"
   analysis_filename: "analysis_{decade}.json"
 
-# ── Validation thresholds ─────────────────────────────────────────
+# ── Validation thresholds ────────────────────────────────────────
 validation:
   min_lyrics_coverage: 0.85
   min_sentiment_coverage: 0.85

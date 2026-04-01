@@ -1,0 +1,84 @@
+# Test configuration — overrides for isolated unit and smoke tests.
+# Does not make live API calls. Uses test-scoped cache and checkpoint dirs.
+
+project:
+  name: billboard-mood-pipeline
+  version: "0.1.0"
+  year_range: [1993, 1993]
+  full_year_range: [1958, 2024]
+  top_n: 10
+
+dataset:
+  github_url: "https://raw.githubusercontent.com/KorbenD/billboard-top-100/master/data/chart_data.json"
+  commit_sha: ""
+  local_path: "tests/fixtures/data/billboard_top100.json"
+
+lyrics:
+  genius_sleep_time: 0.0
+  musixmatch_truncation_flag: true
+  cache_enabled: false
+
+models:
+  sentiment: "cardiffnlp/twitter-roberta-base-sentiment-latest"
+  mood: "j-hartmann/emotion-english-distilroberta-base"
+  theme: "cross-encoder/nli-MiniLM-L6-v2"
+  semantic_embedding: "sentence-transformers/all-MiniLM-L6-v2"
+
+inference:
+  batch_size: 2
+  sleep_between_batches: 0.0
+  device: "auto"
+  cache_enabled: false
+
+theme:
+  min_confidence: 0.55
+  haiku_fallback_enabled: false
+  semantic_vector_enabled: false
+
+jungian:
+  haiku_model: "claude-haiku-3-20240307"
+  max_retries: 1
+  retry_sleep: 0.0
+
+semantic:
+  tfidf_max_features: 100
+  tfidf_top_k_keywords: 10
+  subject_focus_min_pronouns: 5
+  mtld_min_tokens: 50
+
+cache:
+  lyrics_dir: "tests/fixtures/cache/lyrics"
+  inference_dir: "tests/fixtures/cache/inference"
+
+checkpoints:
+  dir: "tests/fixtures/checkpoints"
+  force_rerun:
+    s1_ingest: false
+    s2_lyrics: false
+    s3_sentiment: false
+    s3_mood: false
+    s3_theme: false
+    s3_jungian: false
+    s3_semantic: false
+    s4_merge: false
+    s5_report: false
+
+logging:
+  log_dir: "tests/fixtures/logs"
+  level: "DEBUG"
+  missing_lyrics_log: "tests/fixtures/logs/missing_lyrics.jsonl"
+  low_confidence_log: "tests/fixtures/logs/low_confidence.jsonl"
+
+outputs:
+  dir: "tests/fixtures/outputs"
+  viz_dir: "tests/fixtures/outputs/viz"
+  report_filename: "validation_report.md"
+  analysis_filename: "analysis_{decade}.json"
+
+validation:
+  min_lyrics_coverage: 0.85
+  min_sentiment_coverage: 0.85
+  min_theme_coverage: 0.75
+  min_jungian_coverage: 0.60
+  max_low_confidence_theme_rate: 0.25
+  min_semantic_coverage: 0.85
