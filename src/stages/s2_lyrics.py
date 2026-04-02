@@ -108,7 +108,6 @@ def fetch_musixmatch(
             "f_has_lyrics": 1,
         }
 
-        # Search for the track first
         search_resp = requests.get(
             "https://api.musixmatch.com/ws/1.1/track.search",
             params=params,
@@ -129,7 +128,6 @@ def fetch_musixmatch(
 
         track_id = track_list[0]["track"]["track_id"]
 
-        # Fetch lyrics for the track
         lyrics_resp = requests.get(
             "https://api.musixmatch.com/ws/1.1/track.lyrics.get",
             params={"track_id": track_id, "apikey": key},
@@ -149,14 +147,14 @@ def fetch_musixmatch(
         if not lyrics_body or not lyrics_body.strip():
             return None, False, "Empty lyrics body returned"
 
-        # Strip Musixmatch attribution footer if present
-        lyrics_text = lyrics_body.split("******* This Lyrics is NOT for Commercial use")[0]
+        lyrics_text = lyrics_body.split(
+            "******* This Lyrics is NOT for Commercial use"
+        )[0]
         lyrics_text = lyrics_text.strip()
 
         if not lyrics_text:
             return None, False, "Lyrics empty after stripping attribution"
 
-        # Free tier always returns truncated lyrics
         return lyrics_text, True, None
 
     except Exception as exc:
@@ -189,7 +187,6 @@ def build_lyrics_record(
     if lyrics:
         word_count = len(lyrics.split())
 
-    status: str
     if lyrics and truncated:
         status = "truncated"
     elif lyrics:
@@ -241,15 +238,17 @@ def _fetch_song_lyrics(
         cached = cache.get(song_id)
         if cached is not None:
             log.debug(f"Cache hit: {song_id} '{title}'")
-            cached["lyrics_cache_hit"] = True
-            return cached
+            # Return a copy to avoid mutating the stored cache entry
+            result = cached.copy()
+            result["lyrics_cache_hit"] = True
+            return result
 
-    # ── Genius primary ──
     genius_error: Optional[str] = None
     musixmatch_error: Optional[str] = None
     genius_tried = False
     musixmatch_tried = False
 
+    # ── Genius primary ──
     if config.genius_api_token:
         genius_tried = True
         log.debug(f"Genius fetch: '{title}' by '{artist}'")
@@ -288,7 +287,8 @@ def _fetch_song_lyrics(
 
         if lyrics:
             log.info(
-                f"Musixmatch: lyrics retrieved (truncated) for '{title}' by '{artist}'"
+                f"Musixmatch: lyrics retrieved (truncated) for "
+                f"'{title}' by '{artist}'"
             )
             record = build_lyrics_record(
                 song_id=song_id,
@@ -323,14 +323,13 @@ def _fetch_song_lyrics(
         pipeline_run_id=run_id,
     )
 
-    record = build_lyrics_record(
+    return build_lyrics_record(
         song_id=song_id,
         lyrics=None,
         source=None,
         truncated=False,
         cache_hit=False,
     )
-    return record
 
 
 # ── Stage entry point ─────────────────────────────────────────────────────────
@@ -346,6 +345,10 @@ def run(
     Reads S1 checkpoint if songs_df not provided. Checks lyrics cache
     before making any API call. Falls back from Genius to Musixmatch.
     Logs all misses to missing_lyrics.jsonl. Writes 02_lyrics.parquet.
+
+    The merge of Schema 1 fields with Schema 2 lyrics fields is performed
+    as an explicit song_id-keyed join — never on DataFrame index — to
+    guarantee correct alignment regardless of upstream sort or filter state.
 
     Args:
         config: PipelineConfig instance
@@ -375,7 +378,8 @@ def run(
 
     for i, row in enumerate(songs_df.to_dict("records"), start=1):
         log.debug(
-            f"S2: [{i}/{total}] '{row['title']}' by '{row['artist']}' ({row['year']})"
+            f"S2: [{i}/{total}] '{row['title']}' by "
+            f"'{row['artist']}' ({row['year']})"
         )
         result = _fetch_song_lyrics(
             song=row,
@@ -386,31 +390,38 @@ def run(
         )
         lyrics_records.append(result)
 
+    cache.close()
+
+    # ── Explicit song_id-keyed merge (Correction 1) ───────────────────────────
+    # Build lyrics DataFrame from records, then merge onto songs_df using
+    # song_id as the join key. This is safe regardless of index state on
+    # either DataFrame — no assumption about row order or index alignment.
     lyrics_df = pd.DataFrame(lyrics_records)
 
-    # Merge Schema 1 fields with Schema 2 lyrics fields on song_id
     merged = songs_df.merge(
-        lyrics_df.drop(columns=["song_id"], errors="ignore"),
-        left_index=True,
-        right_index=True,
+        lyrics_df.drop(columns=["song_id"]),
+        left_on="song_id",
+        right_on=lyrics_df["song_id"],
+        how="left",
     )
 
-    # Ensure song_id from songs_df is the canonical one
-    # (lyrics_df also has song_id but we keep songs_df version)
+    # drop the redundant key column pandas adds on right_on with different name
+    if "key_0" in merged.columns:
+        merged = merged.drop(columns=["key_0"])
+
+    # Ensure all Schema 2 new columns are present even if merge produced none
     for col in _SCHEMA_2_NEW_COLUMNS:
         if col not in merged.columns:
             merged[col] = None
 
-    cache.close()
-
     found = (merged["lyrics_status"] == "found").sum()
-    truncated = (merged["lyrics_status"] == "truncated").sum()
+    truncated_count = (merged["lyrics_status"] == "truncated").sum()
     missing = (merged["lyrics_status"] == "missing").sum()
 
     log.info(
         f"S2: lyrics fetch complete. "
-        f"found={found} truncated={truncated} missing={missing} "
-        f"total={total}"
+        f"found={found} truncated={truncated_count} "
+        f"missing={missing} total={total}"
     )
 
     write_checkpoint(stage, merged, config)

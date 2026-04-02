@@ -1,3 +1,4 @@
+import glob
 import pickle
 from pathlib import Path
 from typing import Any, Optional
@@ -10,8 +11,6 @@ from src.core.logger import get_logger
 log = get_logger("checkpoint")
 
 # ── Stage dependency graph ────────────────────────────────────────────────────
-# Maps each stage key to the ordered list of stages that follow it.
-# Used to determine which checkpoints to invalidate on force rerun.
 _STAGE_ORDER = [
     "s1_ingest",
     "s2_lyrics",
@@ -24,8 +23,6 @@ _STAGE_ORDER = [
     "s5_report",
 ]
 
-# Maps stage keys to their checkpoint filenames.
-# s3_semantic has two checkpoints — corpus and parquet — both invalidated together.
 _STAGE_FILES: dict[str, list[str]] = {
     "s1_ingest":    ["01_songs.parquet"],
     "s2_lyrics":    ["02_lyrics.parquet"],
@@ -35,17 +32,8 @@ _STAGE_FILES: dict[str, list[str]] = {
     "s3_jungian":   ["03_jungian.parquet"],
     "s3_semantic":  [],  # corpus pkl is decade-scoped; handled separately
     "s4_merge":     ["04_merged.parquet"],
-    "s5_report":    [],  # outputs are not in checkpoints/; handled separately
+    "s5_report":    [],  # outputs derived from config; handled separately
 }
-
-# Output files invalidated when s5_report is force-rerun.
-_OUTPUT_FILES = [
-    "outputs/validation_report.md",
-    "outputs/viz/sentiment_drift.png",
-    "outputs/viz/mood_heatmap.png",
-    "outputs/viz/theme_frequency.png",
-    "outputs/viz/jungian_distribution.png",
-]
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -61,14 +49,37 @@ def _parquet_path(stage: str, config: PipelineConfig) -> Optional[Path]:
     return _checkpoint_dir(config) / files[0]
 
 
+def _output_files(config: PipelineConfig) -> list[Path]:
+    """
+    Return the list of S5 output file paths derived from config.
+
+    Uses config.outputs.dir and config.outputs.viz_dir — never hardcoded
+    relative paths. Correct regardless of how outputs are redirected
+    (e.g. in test config pointing to tests/fixtures/outputs/).
+    """
+    outputs_dir = Path(config.outputs.dir)
+    viz_dir = Path(config.outputs.viz_dir)
+    paths = [
+        outputs_dir / config.outputs.report_filename,
+        viz_dir / "sentiment_drift.png",
+        viz_dir / "mood_heatmap.png",
+        viz_dir / "theme_frequency.png",
+        viz_dir / "jungian_distribution.png",
+    ]
+    # Include any analysis NDJSON files matching the pattern
+    for ndjson in glob.glob(str(outputs_dir / "analysis_*.json")):
+        paths.append(Path(ndjson))
+    return paths
+
+
 # ── Public interface ──────────────────────────────────────────────────────────
 
 def checkpoint_exists(stage: str, config: PipelineConfig) -> bool:
     """
     Return True if the checkpoint file for the given stage exists on disk.
 
-    For s3_semantic, checks for the semantic parquet only (not the corpus pkl,
-    which is checked separately via corpus_checkpoint_exists).
+    For s3_semantic, checks for the semantic parquet only.
+    For s5_report, checks for the validation report markdown.
 
     Args:
         stage: stage key matching a key in _STAGE_FILES
@@ -122,7 +133,6 @@ def write_checkpoint(stage: str, df: pd.DataFrame, config: PipelineConfig) -> No
 
     Writes to a .tmp file first, then renames to the final path.
     On APFS (macOS default), same-volume rename is atomic.
-    A checkpoint file either exists and is complete, or does not exist.
 
     Args:
         stage: stage key
@@ -200,9 +210,7 @@ def read_corpus_checkpoint(decade: str, config: PipelineConfig) -> Any:
     """
     path = _checkpoint_dir(config) / f"03_tfidf_corpus_{decade}.pkl"
     if not path.exists():
-        raise FileNotFoundError(
-            f"Corpus checkpoint not found: {path}"
-        )
+        raise FileNotFoundError(f"Corpus checkpoint not found: {path}")
     log.debug(f"Reading corpus checkpoint: {path}")
     with open(path, "rb") as f:
         return pickle.load(f)
@@ -222,7 +230,7 @@ def get_downstream_stages(stage: str) -> list[str]:
         stage: stage key
 
     Returns:
-        List of stage keys that come after stage in _STAGE_ORDER.
+        List of stage keys after stage in _STAGE_ORDER.
 
     Raises:
         ValueError: if stage is not a known stage key.
@@ -235,12 +243,17 @@ def get_downstream_stages(stage: str) -> list[str]:
     return _STAGE_ORDER[idx + 1:]
 
 
-def invalidate_from(stage: str, config: PipelineConfig, decade: Optional[str] = None) -> None:
+def invalidate_from(
+    stage: str,
+    config: PipelineConfig,
+    decade: Optional[str] = None,
+) -> None:
     """
     Delete checkpoints for the given stage and all downstream stages.
 
-    For s3_semantic, also deletes the decade-scoped corpus pkl if decade is provided.
-    For s5_report, deletes output files instead of checkpoint files.
+    Output file paths for s5_report are derived from config — never
+    hardcoded — so invalidation is correct regardless of config.outputs
+    redirection (e.g. in test environments).
 
     Args:
         stage: stage key to start invalidation from (inclusive)
@@ -251,9 +264,7 @@ def invalidate_from(stage: str, config: PipelineConfig, decade: Optional[str] = 
         ValueError: if stage is not a known stage key.
     """
     stages_to_clear = [stage] + get_downstream_stages(stage)
-    log.warning(
-        f"Invalidating checkpoints for stages: {stages_to_clear}"
-    )
+    log.warning(f"Invalidating checkpoints for stages: {stages_to_clear}")
 
     for s in stages_to_clear:
         if s == "s3_semantic":
@@ -266,17 +277,14 @@ def invalidate_from(stage: str, config: PipelineConfig, decade: Optional[str] = 
                 if corpus.exists():
                     corpus.unlink()
                     log.warning(f"Deleted corpus checkpoint: {corpus}")
+
         elif s == "s5_report":
-            for rel_path in _OUTPUT_FILES:
-                p = Path(rel_path)
+            # Derive output paths from config — no hardcoded strings
+            for p in _output_files(config):
                 if p.exists():
                     p.unlink()
                     log.warning(f"Deleted output: {p}")
-            # Also remove the analysis NDJSON if present
-            import glob
-            for ndjson in glob.glob(f"{config.outputs.dir}/analysis_*.json"):
-                Path(ndjson).unlink()
-                log.warning(f"Deleted output: {ndjson}")
+
         else:
             path = _parquet_path(s, config)
             if path and path.exists():

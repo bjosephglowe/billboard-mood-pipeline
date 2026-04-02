@@ -8,6 +8,7 @@ from src.core.checkpoint import checkpoint_exists, read_checkpoint, write_checkp
 from src.core.config import PipelineConfig
 from src.core.logger import get_logger, get_low_confidence_logger
 from src.core.models import get_device, load_sentiment_model, unload_model
+from src.core.text_utils import chunk_lyrics
 
 log = get_logger("s3_sentiment")
 
@@ -19,19 +20,17 @@ _MAX_TOKENS = 512
 # Sentiment bin boundaries (locked P2 Section 2).
 # Ranges are inclusive on the left, exclusive on the right.
 # P2 spec:
-#   strongly_positive:  0.60 to  1.00  (score >= 0.60)
-#   positive:           0.20 to  0.59  (0.20 <= score < 0.60)
-#   neutral:           -0.20 to  0.19  (-0.20 <= score < 0.20)  ← upper is 0.20 exclusive
-#   negative:          -0.60 to -0.21  (-0.60 <= score < -0.20) ← lower is -0.60 inclusive
-#   strongly_negative: -1.00 to -0.60  (score < -0.60)
-#
-# Implemented as (label, low_inclusive, high_exclusive) checked in priority order.
+#   strongly_positive:  score >= 0.60
+#   positive:           0.20 <= score < 0.60
+#   neutral:           -0.20 <= score < 0.20
+#   negative:          -0.60 <= score < -0.20
+#   strongly_negative:  score < -0.60
 _BIN_BOUNDARIES = [
-    ("strongly_positive",  0.60,  2.0),    # score >= 0.60
-    ("positive",           0.20,  0.60),   # 0.20 <= score < 0.60
-    ("neutral",           -0.20,  0.20),   # -0.20 <= score < 0.20
-    ("negative",          -0.60, -0.20),   # -0.60 <= score < -0.20
-    ("strongly_negative", -2.0,  -0.60),   # score < -0.60
+    ("strongly_positive",  0.60,  2.0),
+    ("positive",           0.20,  0.60),
+    ("neutral",           -0.20,  0.20),
+    ("negative",          -0.60, -0.20),
+    ("strongly_negative", -2.0,  -0.60),
 ]
 
 # Map from model label strings to score multipliers (locked P2 Section 2)
@@ -75,51 +74,7 @@ def assign_bin(score: float) -> str:
     for label, low, high in _BIN_BOUNDARIES:
         if low <= score < high:
             return label
-    # Should not be reached with the wide sentinel bounds above,
-    # but guard against floating-point edge cases.
     return "strongly_positive" if score >= 0 else "strongly_negative"
-
-
-def chunk_lyrics(lyrics: str, max_tokens: int = _MAX_TOKENS) -> list[str]:
-    """
-    Split lyrics into chunks that fit within the model's token limit.
-
-    Uses a word-based approximation (1 token ≈ 0.75 words) to avoid
-    loading a tokenizer solely for chunking. Chunks on line boundaries
-    where possible to preserve lyric structure.
-
-    Args:
-        lyrics: full lyrics string
-        max_tokens: maximum tokens per chunk (default 512)
-
-    Returns:
-        List of lyric chunk strings. Empty list if lyrics is empty.
-    """
-    if not lyrics or not lyrics.strip():
-        return []
-
-    # Approximate word limit: 512 tokens * 0.75 words/token ≈ 384 words
-    max_words = int(max_tokens * 0.75)
-
-    lines = [line for line in lyrics.split("\n") if line.strip()]
-    chunks = []
-    current_lines: list[str] = []
-    current_word_count = 0
-
-    for line in lines:
-        line_words = len(line.split())
-        if current_word_count + line_words > max_words and current_lines:
-            chunks.append("\n".join(current_lines))
-            current_lines = [line]
-            current_word_count = line_words
-        else:
-            current_lines.append(line)
-            current_word_count += line_words
-
-    if current_lines:
-        chunks.append("\n".join(current_lines))
-
-    return chunks if chunks else [lyrics]
 
 
 def score_chunks(
@@ -149,8 +104,6 @@ def score_chunks(
         raw_outputs = pipe(batch, truncation=True, max_length=_MAX_TOKENS)
 
         for output in raw_outputs:
-            # output is a list of {"label": str, "score": float} dicts
-            # Normalise label strings to lowercase for consistent mapping
             prob_map = {
                 item["label"].lower(): item["score"]
                 for item in output
@@ -206,7 +159,6 @@ def aggregate_scores(
         weighted_score += chunk_score * weight
         weighted_confidence += chunk_confidence * weight
 
-    # Clamp to valid range
     final_score = max(-1.0, min(1.0, weighted_score))
     final_confidence = max(0.0, min(1.0, weighted_confidence))
 

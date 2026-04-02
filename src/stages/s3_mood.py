@@ -8,25 +8,20 @@ from src.core.checkpoint import checkpoint_exists, read_checkpoint, write_checkp
 from src.core.config import PipelineConfig
 from src.core.logger import get_logger, get_low_confidence_logger
 from src.core.models import get_device, load_mood_model, unload_model
+from src.core.text_utils import chunk_lyrics
 
 log = get_logger("s3_mood")
 
 # ── Constants (locked P2 Section 3) ──────────────────────────────────────────
 
-# Canonical mood taxonomy — locked P2 Section 3.
-# Labels match j-hartmann/emotion-english-distilroberta-base output exactly.
 _MOOD_LABELS = frozenset({
     "joy", "sadness", "anger", "fear", "disgust", "surprise", "neutral"
 })
 
-# Minimum probability for a secondary mood label to be retained (locked P2).
 _SECONDARY_THRESHOLD = 0.20
-
-# Primary label is flagged low_confidence below this threshold (locked P2).
 _LOW_CONFIDENCE_THRESHOLD = 0.35
 
-# Tiebreak order when two labels have probability difference < 0.01 (locked P2).
-# Earlier in list = higher priority.
+# Tiebreak order (locked P2 Section 3): earlier = higher priority
 _TIEBREAK_ORDER = [
     "joy", "sadness", "anger", "fear", "disgust", "surprise", "neutral"
 ]
@@ -51,9 +46,6 @@ def resolve_tie(probs: dict) -> str:
     Applies the locked tiebreak order from P2 Section 3:
     joy > sadness > anger > fear > disgust > surprise > neutral
 
-    Finds the top probability value, collects all labels within 0.01 of it,
-    then returns the one earliest in the tiebreak order.
-
     Args:
         probs: dict mapping mood label -> probability
 
@@ -73,7 +65,6 @@ def resolve_tie(probs: dict) -> str:
         if label in candidates:
             return label
 
-    # Fallback: return the label with the highest raw probability
     return max(probs, key=lambda k: probs[k])
 
 
@@ -85,12 +76,11 @@ def select_secondary(
     """
     Select the secondary mood label if it clears the confidence threshold.
 
-    Excludes the primary label from consideration. Returns (None, None)
-    if no remaining label meets the threshold.
+    Excludes the primary label from consideration.
 
     Args:
         probs: dict mapping mood label -> probability
-        primary: already-selected primary label (excluded from candidates)
+        primary: already-selected primary label (excluded)
         threshold: minimum probability for secondary retention (default 0.20)
 
     Returns:
@@ -111,16 +101,12 @@ def aggregate_mood(chunk_results: list[dict]) -> dict:
     """
     Aggregate per-chunk mood classifications to a song-level result.
 
-    Primary mood is the modal label across all chunks (most frequent).
-    Primary confidence is the mean probability of the modal label across
-    all chunks where it appeared.
-
-    If the modal label has a tie in frequency, resolve_tie is applied
-    to the mean probabilities of the tied labels.
+    Primary mood is the modal label across all chunks. Primary confidence
+    is the mean probability of that label across all chunks. Ties in modal
+    frequency are resolved via resolve_tie on mean probabilities.
 
     Args:
         chunk_results: list of prob dicts, one per chunk.
-                       Each maps mood_label -> probability.
 
     Returns:
         Dict with all Schema 4 mood fields (excluding song_id).
@@ -134,7 +120,6 @@ def aggregate_mood(chunk_results: list[dict]) -> dict:
             "mood_flag": None,
         }
 
-    # Count how many chunks each label is the top label
     label_counts: dict[str, int] = {}
     for prob_map in chunk_results:
         top_label = max(prob_map, key=lambda k: prob_map[k])
@@ -146,14 +131,12 @@ def aggregate_mood(chunk_results: list[dict]) -> dict:
         if count == max_count
     ]
 
-    # Compute mean probabilities across all chunks for each label
     mean_probs: dict[str, float] = {}
     for label in _MOOD_LABELS:
         mean_probs[label] = sum(
             chunk.get(label, 0.0) for chunk in chunk_results
         ) / len(chunk_results)
 
-    # Resolve ties among modal candidates using mean probabilities
     if len(modal_candidates) == 1:
         primary = modal_candidates[0]
     else:
@@ -287,8 +270,6 @@ def run(
                     continue
 
             # ── Chunk and infer ──
-            # Reuse chunk_lyrics from s3_sentiment for consistent chunking
-            from src.stages.s3_sentiment import chunk_lyrics
             chunks = chunk_lyrics(lyrics, max_tokens=512)
 
             chunk_results = classify_chunks(
