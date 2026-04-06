@@ -2,13 +2,13 @@
 project:
   name: billboard-mood-pipeline
   version: "0.1.0"
-  year_range: [1990, 1999]
+  year_range: [2010, 2015]
   full_year_range: [1958, 2024]
   top_n: 10
 
 # ── Dataset ──────────────────────────────────────────────────────
 dataset:
-  github_url: "https://raw.githubusercontent.com/KorbenD/billboard-top-100/master/data/chart_data.json"
+  github_url: "https://raw.githubusercontent.com/mhollingshead/billboard-hot-100/main/date/1990-01-11.json"
   commit_sha: ""
   local_path: "data/raw/billboard_top100.json"
 

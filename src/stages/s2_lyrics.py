@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import pandas as pd
+import requests
 
 from src.core.cache import LyricsCache, get_lyrics_cache
 from src.core.checkpoint import checkpoint_exists, read_checkpoint, write_checkpoint
@@ -22,8 +23,13 @@ _SCHEMA_2_NEW_COLUMNS = [
     "lyrics_cache_hit",
 ]
 
+_GENIUS_HEADERS = {
+    "User-Agent": "curl/7.88.1",
+    "Accept": "application/json",
+}
 
-# ── Genius fetch ──────────────────────────────────────────────────────────────
+
+# ── Genius fetch (direct REST API — no lyricsgenius library) ──────────────────
 
 def fetch_genius(
     title: str,
@@ -32,46 +38,132 @@ def fetch_genius(
     sleep_time: float,
 ) -> tuple[Optional[str], Optional[str]]:
     """
-    Fetch lyrics from Genius API via the lyricsgenius library.
+    Fetch lyrics from Genius using the authenticated search API
+    then the embed.js endpoint for clean lyrics extraction.
 
-    Strips section annotations (e.g. [Chorus]) and excess whitespace from
-    the returned lyrics text. Genius is the primary lyrics source.
-
-    Args:
-        title: song title
-        artist: artist name
-        token: Genius client access token
-        sleep_time: seconds to sleep after each request (rate limiting)
-
-    Returns:
-        Tuple of (lyrics_text, error_message).
-        lyrics_text is None on failure; error_message is None on success.
+    Uses embed.js rather than scraping the song page directly —
+    the embed endpoint returns lyrics in a structured JS payload
+    that can be decoded without interference from metadata containers.
     """
-    try:
-        import lyricsgenius
+    import re as _re
 
-        genius = lyricsgenius.Genius(
-            token,
-            verbose=False,
-            remove_section_headers=True,
-            skip_non_songs=True,
+    auth_headers = {
+        "Authorization": f"Bearer {token}",
+        "User-Agent": "curl/7.88.1",
+        "Accept": "application/json",
+    }
+
+    # Step 1: authenticated search to get song_id and url
+    try:
+        search_resp = requests.get(
+            "https://api.genius.com/search",
+            params={"q": f"{title} {artist}"},
+            headers=auth_headers,
             timeout=15,
         )
-
-        song = genius.search_song(title, artist)
         time.sleep(sleep_time)
-
-        if song is None or not song.lyrics:
-            return None, "No results returned"
-
-        lyrics = song.lyrics.strip()
-        if not lyrics:
-            return None, "Empty lyrics returned"
-
-        return lyrics, None
-
+        search_resp.raise_for_status()
+        hits = search_resp.json().get("response", {}).get("hits", [])
     except Exception as exc:
-        return None, str(exc)
+        return None, f"Genius search failed: {exc}"
+
+    if not hits:
+        return None, "No search results returned"
+
+    # Filter to song-type hits only
+    song_hits = [h for h in hits if h.get("type") == "song"]
+    if not song_hits:
+        return None, "No song-type results returned"
+
+    # Match artist name — strip special chars for loose comparison
+    artist_clean = _re.sub(r"[^a-z0-9 ]", "", artist.lower()).strip()
+    artist_words = [w for w in artist_clean.split() if len(w) > 2]
+
+    selected = None
+    for hit in song_hits[:5]:
+        result = hit.get("result", {})
+        result_artist = result.get("primary_artist", {}).get("name", "").lower()
+        result_artist_clean = _re.sub(r"[^a-z0-9 ]", "", result_artist)
+        if any(w in result_artist_clean for w in artist_words):
+            selected = result
+            break
+
+    if not selected:
+        selected = song_hits[0]["result"]
+
+    song_id = selected.get("id")
+    if not song_id:
+        return None, "No song ID in search result"
+
+    # Step 2: fetch embed.js — contains lyrics as escaped HTML in JSON.parse()
+    try:
+        embed_resp = requests.get(
+            f"https://genius.com/songs/{song_id}/embed.js",
+            headers={"User-Agent": "curl/7.88.1"},
+            timeout=15,
+        )
+        embed_resp.raise_for_status()
+    except Exception as exc:
+        return None, f"Genius embed fetch failed: {exc}"
+
+    lyrics = _extract_lyrics_from_embed(embed_resp.text)
+    if not lyrics:
+        return None, "Could not extract lyrics from embed"
+
+    return lyrics, None
+
+
+def _extract_lyrics_from_embed(js_text: str) -> Optional[str]:
+    """
+    Extract and clean lyrics from the Genius embed.js JavaScript payload.
+
+    The embed JS wraps HTML in a JSON.parse('...') call with multiple
+    levels of escaping. We decode with unicode_escape then parse the
+    resulting HTML with BeautifulSoup to find the rg_embed_body div.
+    """
+    import re as _re
+
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        return None
+
+    # Extract the single-quoted string argument to JSON.parse()
+    match = _re.search(r"JSON\.parse\('(.*?)'\)", js_text, _re.DOTALL)
+    if not match:
+        return None
+
+    raw = match.group(1)
+
+    # Decode all escape levels using unicode_escape
+    try:
+        decoded = raw.encode("utf-8").decode("unicode_escape")
+    except Exception:
+        return None
+
+    # Parse the decoded HTML
+    soup = BeautifulSoup(decoded, "html.parser")
+
+    # Find the lyrics body div — try id first, then class
+    body = soup.find("div", id=_re.compile("rg_embed_body"))
+    if not body:
+        body = soup.find("div", class_=_re.compile("rg_embed_body"))
+    if not body:
+        return None
+
+    # Replace <br> tags with newlines before text extraction
+    for br in body.find_all("br"):
+        br.replace_with("\n")
+
+    # Extract text
+    lyrics = body.get_text(separator="\n")
+
+    # Clean up: remove escaped forward slashes, excess blank lines
+    lyrics = lyrics.replace("\\/", "/")
+    lyrics = _re.sub(r"\n{3,}", "\n\n", lyrics)
+    lyrics = lyrics.strip()
+
+    return lyrics if len(lyrics) > 50 else None
 
 
 # ── Musixmatch fetch ──────────────────────────────────────────────────────────
@@ -86,47 +178,38 @@ def fetch_musixmatch(
 
     Musixmatch free tier returns only 30% of lyrics. Any successful
     response is flagged as truncated per the locked source strategy.
-
-    Args:
-        title: song title
-        artist: artist name
-        key: Musixmatch API key
-
-    Returns:
-        Tuple of (lyrics_text, truncated_flag, error_message).
-        lyrics_text is None on failure.
-        truncated_flag is always True on success (free tier limitation).
-        error_message is None on success.
     """
     try:
-        import requests
-
-        params = {
-            "q_track": title,
-            "q_artist": artist,
-            "apikey": key,
-            "f_has_lyrics": 1,
-        }
-
         search_resp = requests.get(
             "https://api.musixmatch.com/ws/1.1/track.search",
-            params=params,
+            params={
+                "q_track": title,
+                "q_artist": artist,
+                "apikey": key,
+                "f_has_lyrics": 1,
+                "s_track_rating": "desc",
+            },
             timeout=15,
         )
         search_resp.raise_for_status()
         search_data = search_resp.json()
 
-        track_list = (
-            search_data
-            .get("message", {})
-            .get("body", {})
-            .get("track_list", [])
-        )
+        body = search_data.get("message", {}).get("body", {})
 
+        # Handle both dict and list response shapes
+        if isinstance(body, list):
+            return None, False, "Unexpected list in response body"
+
+        track_list = body.get("track_list", [])
         if not track_list:
             return None, False, "No track found"
 
-        track_id = track_list[0]["track"]["track_id"]
+        # Each item in track_list is {"track": {...}}
+        first = track_list[0]
+        if isinstance(first, dict) and "track" in first:
+            track_id = first["track"]["track_id"]
+        else:
+            return None, False, "Unexpected track_list structure"
 
         lyrics_resp = requests.get(
             "https://api.musixmatch.com/ws/1.1/track.lyrics.get",
@@ -149,8 +232,7 @@ def fetch_musixmatch(
 
         lyrics_text = lyrics_body.split(
             "******* This Lyrics is NOT for Commercial use"
-        )[0]
-        lyrics_text = lyrics_text.strip()
+        )[0].strip()
 
         if not lyrics_text:
             return None, False, "Lyrics empty after stripping attribution"
@@ -170,19 +252,6 @@ def build_lyrics_record(
     truncated: bool,
     cache_hit: bool,
 ) -> dict:
-    """
-    Construct a Schema 2 lyrics result dict for a single song.
-
-    Args:
-        song_id: 16-char hex song identifier
-        lyrics: lyrics text or None
-        source: "genius" | "musixmatch" | None
-        truncated: True if Musixmatch 30% truncation applies
-        cache_hit: True if result served from local cache
-
-    Returns:
-        Dict with all Schema 2 lyrics fields.
-    """
     word_count: Optional[int] = None
     if lyrics:
         word_count = len(lyrics.split())
@@ -215,20 +284,6 @@ def _fetch_song_lyrics(
     missing_log,
     run_id: str,
 ) -> dict:
-    """
-    Fetch lyrics for a single song. Checks cache first. Falls back from
-    Genius to Musixmatch. Logs misses.
-
-    Args:
-        song: Schema 1 song record dict
-        config: PipelineConfig instance
-        cache: LyricsCache instance
-        missing_log: MissingLyricsWriter instance
-        run_id: pipeline_run_id string for log records
-
-    Returns:
-        Dict with all Schema 2 lyrics fields for this song.
-    """
     song_id = song["song_id"]
     title = song["title"]
     artist = song["artist"]
@@ -238,7 +293,6 @@ def _fetch_song_lyrics(
         cached = cache.get(song_id)
         if cached is not None:
             log.debug(f"Cache hit: {song_id} '{title}'")
-            # Return a copy to avoid mutating the stored cache entry
             result = cached.copy()
             result["lyrics_cache_hit"] = True
             return result
@@ -258,7 +312,6 @@ def _fetch_song_lyrics(
             token=config.genius_api_token,
             sleep_time=config.lyrics.genius_sleep_time,
         )
-
         if lyrics:
             record = build_lyrics_record(
                 song_id=song_id,
@@ -270,7 +323,6 @@ def _fetch_song_lyrics(
             if config.lyrics.cache_enabled:
                 cache.set(song_id, record)
             return record
-
         log.debug(f"Genius miss: '{title}' — {genius_error}")
     else:
         log.warning("GENIUS_API_TOKEN not set — skipping Genius fetch.")
@@ -284,7 +336,6 @@ def _fetch_song_lyrics(
             artist=artist,
             key=config.musixmatch_api_key,
         )
-
         if lyrics:
             log.info(
                 f"Musixmatch: lyrics retrieved (truncated) for "
@@ -300,7 +351,6 @@ def _fetch_song_lyrics(
             if config.lyrics.cache_enabled:
                 cache.set(song_id, record)
             return record
-
         log.debug(f"Musixmatch miss: '{title}' — {musixmatch_error}")
     else:
         log.warning("MUSIXMATCH_API_KEY not set — skipping Musixmatch fallback.")
@@ -341,23 +391,6 @@ def run(
 ) -> pd.DataFrame:
     """
     Execute Stage 2: lyrics fetch for all songs in the S1 checkpoint.
-
-    Reads S1 checkpoint if songs_df not provided. Checks lyrics cache
-    before making any API call. Falls back from Genius to Musixmatch.
-    Logs all misses to missing_lyrics.jsonl. Writes 02_lyrics.parquet.
-
-    The merge of Schema 1 fields with Schema 2 lyrics fields is performed
-    as an explicit song_id-keyed join — never on DataFrame index — to
-    guarantee correct alignment regardless of upstream sort or filter state.
-
-    Args:
-        config: PipelineConfig instance
-        songs_df: optional pre-loaded S1 DataFrame; loaded from checkpoint
-                  if not provided
-        run_id: pipeline_run_id for log records
-
-    Returns:
-        pd.DataFrame matching Schema 2 (all Schema 1 fields plus lyrics fields).
     """
     stage = "s2_lyrics"
 
@@ -392,10 +425,6 @@ def run(
 
     cache.close()
 
-    # ── Explicit song_id-keyed merge (Correction 1) ───────────────────────────
-    # Build lyrics DataFrame from records, then merge onto songs_df using
-    # song_id as the join key. This is safe regardless of index state on
-    # either DataFrame — no assumption about row order or index alignment.
     lyrics_df = pd.DataFrame(lyrics_records)
 
     merged = songs_df.merge(
@@ -405,11 +434,9 @@ def run(
         how="left",
     )
 
-    # drop the redundant key column pandas adds on right_on with different name
     if "key_0" in merged.columns:
         merged = merged.drop(columns=["key_0"])
 
-    # Ensure all Schema 2 new columns are present even if merge produced none
     for col in _SCHEMA_2_NEW_COLUMNS:
         if col not in merged.columns:
             merged[col] = None
