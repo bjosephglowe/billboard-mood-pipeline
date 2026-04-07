@@ -18,3 +18,4 @@ python-dotenv==1.0.1
 PyYAML==6.0.1
 matplotlib==3.8.4
 beautifulsoup4==4.12.3
+# Theme model: cross-encoder/nli-MiniLM2-L6-H768 (replaces nli-MiniLM-L6-v2, removed from HuggingFace)
