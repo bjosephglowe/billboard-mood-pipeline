@@ -387,7 +387,7 @@ class TestRenderValidationReport:
             "model_versions": {
                 "sentiment": "cardiffnlp/twitter-roberta",
                 "mood": "j-hartmann/emotion-distilroberta",
-                "theme": "cross-encoder/nli-MiniLM-L6-v2",
+                "theme": "cross-encoder/nli-MiniLM2-L6-H768",
                 "jungian": "claude-haiku-3-20240307",
                 "semantic": "spacy:en_core_web_sm",
             },
@@ -431,7 +431,7 @@ class TestRenderValidationReport:
         path = str(tmp_path / "validation_report.md")
         render_validation_report(self._make_inputs(), path)
         content = Path(path).read_text()
-        assert "nli-MiniLM-L6-v2" in content
+        assert "nli-MiniLM2-L6-H768" in content
 
 
 # ── write_ndjson ──────────────────────────────────────────────────────────────

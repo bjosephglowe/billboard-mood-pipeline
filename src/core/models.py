@@ -142,7 +142,7 @@ def load_theme_model(config: PipelineConfig, device: str) -> Tuple[Any, str]:
     """
     Load the zero-shot theme classification pipeline.
 
-    Model: config.models.theme (cross-encoder/nli-MiniLM-L6-v2)
+    Model: config.models.theme (cross-encoder/nli-MiniLM2-L6-H768)
     Task: zero-shot-classification
 
     Args:

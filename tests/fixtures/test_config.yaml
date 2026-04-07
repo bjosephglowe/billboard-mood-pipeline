@@ -21,7 +21,7 @@ lyrics:
 models:
   sentiment: "cardiffnlp/twitter-roberta-base-sentiment-latest"
   mood: "j-hartmann/emotion-english-distilroberta-base"
-  theme: "cross-encoder/nli-MiniLM-L6-v2"
+  theme: "cross-encoder/nli-MiniLM2-L6-H768"
   semantic_embedding: "sentence-transformers/all-MiniLM-L6-v2"
 
 inference:
