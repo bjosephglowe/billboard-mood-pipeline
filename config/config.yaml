@@ -40,7 +40,7 @@ theme:
 
 # ── Jungian ──────────────────────────────────────────────────────
 jungian:
-  haiku_model: "claude-haiku-3-20240307"
+  haiku_model: "claude-haiku-4-5-20251001"
   max_retries: 2
   retry_sleep: 2.0
 

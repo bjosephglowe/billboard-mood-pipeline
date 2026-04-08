@@ -211,7 +211,7 @@ def apply_haiku_fallback(
 
     # Import here to avoid circular import at module level.
     # s3_jungian depends on prompts/jungian_theme, not on s3_theme.
-    from src.stages.s3_jungian import call_single as jungian_call_single
+    from src.stages.s3_jungian import call_haiku_for_theme_fallback as jungian_call_single
 
     log.info(
         f"S3c: requesting Haiku theme fallback for "
