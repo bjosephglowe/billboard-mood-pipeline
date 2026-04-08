@@ -171,9 +171,9 @@ def _build_null_record(song_id: str) -> dict:
     }
 
 
-def apply_haiku_fallback(
-    uncertain_songs: list[dict],
-    lyrics_lookup: dict[str, str],
+def _apply_haiku_fallback(
+    uncertain_song_ids: list[str],
+    lyrics_lookup: dict[str, dict],
     theme_records: dict[str, dict],
     config: PipelineConfig,
     inference_cache,
@@ -182,97 +182,86 @@ def apply_haiku_fallback(
     """
     Attempt Haiku API theme fallback for songs where MiniLM returned uncertain.
 
-    Calls s3_jungian.run_single for each uncertain song, passing
-    request_theme_fallback=True. Updates theme_records in-place with
-    Haiku results where available.
+    Calls call_haiku_for_theme_fallback from s3_jungian for each uncertain
+    song. That function returns a partial Schema 5 dict directly — fields
+    are at the top level (theme_primary, theme_primary_confidence, etc.),
+    not nested under a theme_fallback key.
 
-    This function does not own Jungian inference — it delegates to
-    s3_jungian.call_single which handles the API call, retry, and
-    Jungian record writing. Only the theme_fallback portion of the
-    response is consumed here.
+    Updates theme_records in-place with Haiku results where available.
+
+    This function is an intentional cross-stage call to the public
+    call_haiku_for_theme_fallback interface in s3_jungian. S3d will
+    subsequently run a full Jungian pass on all songs independently.
 
     Args:
-        uncertain_songs: list of song dicts (Schema 1 fields) needing fallback
-        lyrics_lookup: dict mapping song_id -> lyrics string
-        theme_records: dict mapping song_id -> Schema 5 record (mutated in place)
+        uncertain_song_ids: list of song_ids needing Haiku fallback
+        lyrics_lookup: dict mapping song_id -> full row dict from lyrics_df
+        theme_records: dict mapping song_id -> Schema 5 record (mutated)
         config: PipelineConfig instance
         inference_cache: InferenceCache instance
         run_id: pipeline_run_id for log records
     """
-    if not uncertain_songs:
-        return
-
-    if not config.theme.haiku_fallback_enabled:
+    if not uncertain_song_ids or not config.theme.haiku_fallback_enabled:
         log.info(
-            "S3c: Haiku fallback disabled in config — "
-            f"{len(uncertain_songs)} songs remain uncertain."
+            f"S3c: Haiku fallback {'disabled in config' if not config.theme.haiku_fallback_enabled else 'skipped — no uncertain songs'}."
         )
         return
 
-    # Import here to avoid circular import at module level.
+    # Deferred import to avoid circular dependency at module level.
     # s3_jungian depends on prompts/jungian_theme, not on s3_theme.
-    from src.stages.s3_jungian import call_haiku_for_theme_fallback as jungian_call_single
+    from src.stages.s3_jungian import call_haiku_for_theme_fallback
 
     log.info(
         f"S3c: requesting Haiku theme fallback for "
-        f"{len(uncertain_songs)} uncertain songs."
+        f"{len(uncertain_song_ids)} uncertain songs."
     )
+
     fallback_success = 0
     low_conf_log = get_low_confidence_logger(config.logging.low_confidence_log)
 
-    for song in uncertain_songs:
-        song_id = song["song_id"]
-        lyrics = lyrics_lookup.get(song_id, "")
-
-        if not lyrics:
-            log.debug(f"S3c: no lyrics for Haiku fallback on {song_id} — skipping.")
+    for song_id in uncertain_song_ids:
+        row = lyrics_lookup.get(song_id)
+        if not row:
+            log.debug(f"S3c: no row found for {song_id} — skipping fallback.")
             continue
 
-        # Check inference cache for a prior theme result from Haiku
+        lyrics = row.get("lyrics", "")
+        if not lyrics:
+            log.debug(f"S3c: no lyrics for {song_id} — skipping fallback.")
+            continue
+
+        # Check inference cache for a prior Haiku theme result
         if config.inference.cache_enabled:
             cached = inference_cache.get_inference(song_id, "theme")
-            if cached is not None:
+            if cached is not None and cached.get("theme_source") == "haiku":
                 log.debug(f"S3c: Haiku theme cache hit for {song_id}")
                 theme_records[song_id] = cached
+                fallback_success += 1
                 continue
 
-        haiku_result = jungian_call_single(
-            song=song,
+        # call_haiku_for_theme_fallback returns a partial Schema 5 dict
+        # with keys: song_id, theme_primary, theme_primary_confidence,
+        # theme_secondary, theme_secondary_confidence, theme_source,
+        # theme_flag — or None if Haiku returned no valid theme.
+        result = call_haiku_for_theme_fallback(
+            song_id=song_id,
             lyrics=lyrics,
-            request_theme_fallback=True,
+            title=row.get("title", ""),
+            artist=row.get("artist", ""),
             config=config,
             run_id=run_id,
         )
 
-        if haiku_result is None:
-            log.debug(f"S3c: Haiku fallback returned None for {song_id}")
-            continue
-
-        theme_fb = haiku_result.get("theme_fallback", {})
-        t_primary = theme_fb.get("primary")
-        t_primary_conf = theme_fb.get("primary_confidence", 0.0)
-        t_secondary = theme_fb.get("secondary")
-        t_secondary_conf = theme_fb.get("secondary_confidence", 0.0)
-
-        if t_primary is not None:
-            record = build_theme_record(
-                song_id=song_id,
-                primary=t_primary,
-                primary_conf=round(float(t_primary_conf), 6) if t_primary_conf else None,
-                secondary=t_secondary,
-                secondary_conf=round(float(t_secondary_conf), 6) if t_secondary_conf else None,
-                source="haiku",
-                flag="haiku_fallback",
-            )
-            theme_records[song_id] = record
+        if result is not None and result.get("theme_primary") is not None:
+            theme_records[song_id] = result
             fallback_success += 1
 
             if config.inference.cache_enabled:
-                inference_cache.set_inference(song_id, "theme", record)
+                inference_cache.set_inference(song_id, "theme", result)
 
             log.debug(
                 f"S3c: Haiku fallback succeeded for {song_id} "
-                f"— theme={t_primary}"
+                f"— theme={result['theme_primary']}"
             )
         else:
             log.debug(
@@ -281,9 +270,9 @@ def apply_haiku_fallback(
             )
             low_conf_log.log(
                 song_id=song_id,
-                year=song.get("year", 0),
-                title=song.get("title", ""),
-                artist=song.get("artist", ""),
+                year=row.get("year", 0),
+                title=row.get("title", ""),
+                artist=row.get("artist", ""),
                 dimension="theme",
                 flag_value="low_confidence",
                 pipeline_run_id=run_id,
@@ -292,7 +281,7 @@ def apply_haiku_fallback(
     log.info(
         f"S3c: Haiku fallback complete. "
         f"resolved={fallback_success} "
-        f"still_uncertain={len(uncertain_songs) - fallback_success}"
+        f"still_uncertain={len(uncertain_song_ids) - fallback_success}"
     )
 
 
@@ -339,17 +328,16 @@ def run(
 
     pipe = None
     theme_records: dict[str, dict] = {}
-    uncertain_songs: list[dict] = []
-    lyrics_lookup: dict[str, str] = {}
+    uncertain_song_ids: list[str] = []
+    lyrics_lookup: dict[str, dict] = {}
     total = len(lyrics_df)
     low_conf_log = get_low_confidence_logger(config.logging.low_confidence_log)
 
     rows = lyrics_df.to_dict("records")
 
-    # Build lyrics lookup for Haiku fallback pass
+    # Build full-row lyrics lookup for Haiku fallback pass
     for row in rows:
-        if row.get("lyrics"):
-            lyrics_lookup[row["song_id"]] = row["lyrics"]
+        lyrics_lookup[row["song_id"]] = row
 
     try:
         pipe, device = load_theme_model(config, device)
@@ -391,8 +379,8 @@ def run(
             )
 
             if primary == "uncertain":
-                # Queue for Haiku fallback — do not log low_confidence yet,
-                # it may be resolved in pass 2.
+                # Queue for Haiku fallback — low_confidence logged in
+                # _apply_haiku_fallback if fallback also fails.
                 record = build_theme_record(
                     song_id=song_id,
                     primary="uncertain",
@@ -403,7 +391,7 @@ def run(
                     flag="low_confidence",
                 )
                 theme_records[song_id] = record
-                uncertain_songs.append(row)
+                uncertain_song_ids.append(song_id)
                 log.debug(
                     f"S3c: uncertain for {song_id} — queued for Haiku fallback."
                 )
@@ -432,12 +420,12 @@ def run(
 
     log.info(
         f"S3c: MiniLM pass complete. "
-        f"total={total} uncertain={len(uncertain_songs)}"
+        f"total={total} uncertain={len(uncertain_song_ids)}"
     )
 
-    # ── Pass 2: Haiku fallback ──
-    apply_haiku_fallback(
-        uncertain_songs=uncertain_songs,
+    # ── Pass 2: Haiku fallback ────────────────────────────────────────────────
+    _apply_haiku_fallback(
+        uncertain_song_ids=uncertain_song_ids,
         lyrics_lookup=lyrics_lookup,
         theme_records=theme_records,
         config=config,

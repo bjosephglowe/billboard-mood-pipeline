@@ -509,22 +509,22 @@ def render_validation_report(inputs: dict, output_path: str) -> None:
 # ── NDJSON output ─────────────────────────────────────────────────────────────
 
 def _serialise_row(row: dict) -> dict:
-    """
-    Convert a merged record row to a JSON-serialisable dict.
-
-    Handles: pandas NA/NaT/NaN → None, lists stored as objects.
-    """
+    import numpy as np
     out = {}
     for k, v in row.items():
-        if pd.isna(v) if not isinstance(v, (list, dict)) else False:
-            out[k] = None
-        elif isinstance(v, list):
+        if isinstance(v, (list, dict)):
             out[k] = v
+        elif isinstance(v, np.ndarray):
+            # numpy arrays from parquet (e.g. jungian_evidence) — convert to list
+            out[k] = v.tolist() if v.size > 0 else None
         elif hasattr(v, "item"):
-            # numpy scalar → Python native
+            # numpy scalar — convert to Python native
             out[k] = v.item()
         else:
-            out[k] = v
+            try:
+                out[k] = None if pd.isna(v) else v
+            except (TypeError, ValueError):
+                out[k] = v
     return out
 
 
