@@ -325,9 +325,18 @@ def run(
         if config.inference.cache_enabled:
             cached = inference_cache.get_inference(song_id, "jungian")
             if cached is not None:
-                log.debug(f"S3d: inference cache hit for {song_id}")
-                records.append(cached)
-                continue
+                # Only trust cache hits that represent completed Haiku analysis.
+                # api_unavailable records from failed runs must not block a fresh
+                # attempt — discard them and fall through to a new API call.
+                if cached.get("jungian_flag") != "api_unavailable":
+                    log.debug(f"S3d: inference cache hit for {song_id}")
+                    records.append(cached)
+                    continue
+                else:
+                    log.debug(
+                        f"S3d: discarding stale api_unavailable cache entry "
+                        f"for {song_id} — retrying."
+                    )
 
         # ── Haiku call ──
         request_theme = song_id in fallback_ids

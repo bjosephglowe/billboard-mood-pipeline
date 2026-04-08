@@ -34,7 +34,7 @@ inference:
 
 # ── Theme classification ─────────────────────────────────────────
 theme:
-  min_confidence: 0.55
+  min_confidence: 0.35
   haiku_fallback_enabled: true
   semantic_vector_enabled: false
 
