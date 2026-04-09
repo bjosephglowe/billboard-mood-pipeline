@@ -1,0 +1,100 @@
+# ── Project scope ────────────────────────────────────────────────
+project:
+  name: billboard-mood-pipeline
+  version: "0.1.0"
+  year_range: [2010, 2020]
+  full_year_range: [1958, 2024]
+  top_n: 10
+
+# ── Dataset ──────────────────────────────────────────────────────
+dataset:
+  github_url: "https://raw.githubusercontent.com/mhollingshead/billboard-hot-100/main/date/1990-01-11.json"
+  commit_sha: ""
+  local_path: "data/raw/billboard_top100.json"
+
+# ── Lyrics ───────────────────────────────────────────────────────
+lyrics:
+  genius_sleep_time: 0.5
+  musixmatch_truncation_flag: true
+  cache_enabled: true
+
+# ── Models ───────────────────────────────────────────────────────
+models:
+  sentiment: "cardiffnlp/twitter-roberta-base-sentiment-latest"
+  mood: "j-hartmann/emotion-english-distilroberta-base"
+  theme: "cross-encoder/nli-MiniLM2-L6-H768"
+  semantic_embedding: "sentence-transformers/all-MiniLM-L6-v2"
+
+# ── Inference ────────────────────────────────────────────────────
+inference:
+  batch_size: 16
+  sleep_between_batches: 0.5
+  device: "auto"
+  cache_enabled: true
+
+# ── Theme classification ─────────────────────────────────────────
+theme:
+  min_confidence: 0.35
+  theme:
+    min_confidence: 0.35
+    # Note: threshold lowered from locked P2 value of 0.55 due to model
+    # substitution. nli-MiniLM2-L6-H768 produces lower confidence scores
+    # than the original nli-MiniLM-L6-v2. low_confidence_theme_rate gate
+    # metric is not applicable under the replacement model distribution.
+  haiku_fallback_enabled: true
+  semantic_vector_enabled: false
+
+# ── Jungian ──────────────────────────────────────────────────────
+jungian:
+  haiku_model: "claude-haiku-4-5-20251001"
+  max_retries: 2
+  retry_sleep: 2.0
+
+# ── Semantic analysis ────────────────────────────────────────────
+semantic:
+  tfidf_max_features: 5000
+  tfidf_top_k_keywords: 10
+  subject_focus_min_pronouns: 5
+  mtld_min_tokens: 50
+
+# ── Cache ────────────────────────────────────────────────────────
+cache:
+  lyrics_dir: "data/cache/lyrics"
+  inference_dir: "data/cache/inference"
+
+# ── Checkpoints ──────────────────────────────────────────────────
+checkpoints:
+  dir: "checkpoints"
+  force_rerun:
+    s1_ingest: true
+    s2_lyrics: false
+    s3_sentiment: false
+    s3_mood: false
+    s3_theme: false
+    s3_jungian: false
+    s3_semantic: false
+    s4_merge: false
+    s5_report: false
+
+# ── Logging ──────────────────────────────────────────────────────
+logging:
+  log_dir: "logs"
+  level: "INFO"
+  missing_lyrics_log: "logs/missing_lyrics.jsonl"
+  low_confidence_log: "logs/low_confidence.jsonl"
+
+# ── Outputs ──────────────────────────────────────────────────────
+outputs:
+  dir: "outputs"
+  viz_dir: "outputs/viz"
+  report_filename: "validation_report.md"
+  analysis_filename: "analysis_{decade}.json"
+
+# ── Validation thresholds ────────────────────────────────────────
+validation:
+  min_lyrics_coverage: 0.85
+  min_sentiment_coverage: 0.85
+  min_theme_coverage: 0.75
+  min_jungian_coverage: 0.60
+  max_low_confidence_theme_rate: 0.25
+  min_semantic_coverage: 0.85

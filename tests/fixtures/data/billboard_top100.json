@@ -1,0 +1,27 @@
+[
+  {
+    "rank": 1,
+    "song": "Can't Help Falling in Love",
+    "artist": "UB40",
+    "year": 1993
+  },
+  {
+    "rank": 2,
+    "song": "Whoomp There It Is",
+    "artist": "Tag Team",
+    "year": 1993
+  },
+  {
+    "rank": 3,
+    "song": "Rump Shaker",
+    "artist": "Wreckx-N-Effect",
+    "year": 1993
+  },
+  {
+    "rank": 4,
+    "song": "I Will Always Love You",
+    "artist": "Whitney Houston",
+    "year": 1993
+  },
+  { "rank": 5, "song": "Informer", "artist": "Snow", "year": 1993 }
+]

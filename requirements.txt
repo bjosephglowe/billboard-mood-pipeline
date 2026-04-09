@@ -1,0 +1,22 @@
+
+torch==2.2.2
+transformers==4.40.2
+accelerate==0.30.0
+spacy==3.7.4
+# spaCy model installed via direct wheel — see README bootstrap instructions
+# pip install https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
+scikit-learn==1.4.2
+lexicalrichness==0.5.1
+lyricsgenius==3.0.1
+
+diskcache==5.6.3
+pandas==2.2.2
+pyarrow==16.0.0
+pydantic-settings==2.2.1
+anthropic==0.89.0
+httpx==0.28.1
+python-dotenv==1.0.1
+PyYAML==6.0.1
+matplotlib==3.8.4
+beautifulsoup4==4.12.3
+# Theme model: cross-encoder/nli-MiniLM2-L6-H768 (replaces nli-MiniLM-L6-v2, removed from HuggingFace)
