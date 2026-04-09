@@ -521,12 +521,12 @@ class TestRun:
                    return_value=(pipe, "cpu")):
             with patch("src.stages.s3_theme.unload_model"):
                 with patch(
-                    "src.stages.s3_theme.apply_haiku_fallback",
-                    side_effect=lambda uncertain_songs, lyrics_lookup,
+                    "src.stages.s3_theme._apply_haiku_fallback",
+                    side_effect=lambda uncertain_song_ids, lyrics_lookup,
                     theme_records, config, inference_cache, run_id: [
                         theme_records.update({
-                            song["song_id"]: {
-                                "song_id": song["song_id"],
+                            song_id: {
+                                "song_id": song_id,
                                 "theme_primary": "love_and_romance",
                                 "theme_primary_confidence": 0.72,
                                 "theme_secondary": None,
@@ -535,7 +535,7 @@ class TestRun:
                                 "theme_flag": "haiku_fallback",
                             }
                         })
-                        for song in uncertain_songs
+                        for song_id in uncertain_song_ids
                     ]
                 ):
                     df = run(config, lyrics_df=lyrics_df, run_id="test")
