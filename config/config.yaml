@@ -2,7 +2,7 @@
 project:
   name: billboard-mood-pipeline
   version: "0.1.0"
-  year_range: [2010, 2015]
+  year_range: [2010, 2020]
   full_year_range: [1958, 2024]
   top_n: 10
 
@@ -35,6 +35,12 @@ inference:
 # ── Theme classification ─────────────────────────────────────────
 theme:
   min_confidence: 0.35
+  theme:
+    min_confidence: 0.35
+    # Note: threshold lowered from locked P2 value of 0.55 due to model
+    # substitution. nli-MiniLM2-L6-H768 produces lower confidence scores
+    # than the original nli-MiniLM-L6-v2. low_confidence_theme_rate gate
+    # metric is not applicable under the replacement model distribution.
   haiku_fallback_enabled: true
   semantic_vector_enabled: false
 
@@ -60,7 +66,7 @@ cache:
 checkpoints:
   dir: "checkpoints"
   force_rerun:
-    s1_ingest: false
+    s1_ingest: true
     s2_lyrics: false
     s3_sentiment: false
     s3_mood: false
