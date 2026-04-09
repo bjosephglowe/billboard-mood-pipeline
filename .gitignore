@@ -20,8 +20,12 @@ build/
 logs/*.log
 logs/*.jsonl
 
-# Cache stores — large, runtime-generated
+# Cache stores — ignore db files, track directory structure
 data/cache/
+!data/cache/lyrics/
+!data/cache/lyrics/.gitkeep
+!data/cache/inference/
+!data/cache/inference/.gitkeep
 
 # Checkpoints — runtime-generated, not versioned
 checkpoints/*.parquet
