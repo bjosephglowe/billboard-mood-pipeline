@@ -22,6 +22,7 @@ from typing import Optional
 from src.core.checkpoint import invalidate_from
 from src.core.config import PipelineConfig, load_config
 from src.core.logger import get_logger, init_run_logging
+from src.core.archiver import archive_run
 
 log = get_logger("pipeline")
 
@@ -327,6 +328,9 @@ def main(config_path: str = "config/config.yaml") -> None:
         completed_at=completed_at,
         gate_pass=gate_pass,
     )
+
+    # ── Archive outputs ──
+    archive_run(config=config, run_id=run_id)
 
     gate_str = "PASS" if gate_pass else ("FAIL" if gate_pass is False else "UNKNOWN")
     log.info(

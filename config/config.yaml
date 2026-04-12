@@ -66,7 +66,7 @@ cache:
 checkpoints:
   dir: "checkpoints"
   force_rerun:
-    s1_ingest: true
+    s1_ingest: false
     s2_lyrics: false
     s3_sentiment: false
     s3_mood: false
@@ -89,6 +89,14 @@ outputs:
   viz_dir: "outputs/viz"
   report_filename: "validation_report.md"
   analysis_filename: "analysis_{decade}.json"
+
+# ── Archiving ─────────────────────────────────────────────────────────────────
+archiving:
+  enabled: true
+  local_archive_dir: "archive"
+  gcs_enabled: true
+  gcs_prefix: "runs" # objects stored at gs://{bucket}/runs/{run_id}/
+  local_retention_max_runs: 10 # keep N most recent local archive entries; 0 = keep all
 
 # ── Validation thresholds ────────────────────────────────────────
 validation:

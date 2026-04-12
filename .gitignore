@@ -1,6 +1,13 @@
 # Secrets
 .env
 
+# Service account credentials
+credentials/
+credentials/gcs_service_account.json
+
+# Local run archives
+archive/
+
 # Virtual environment
 .venv/
 venv/

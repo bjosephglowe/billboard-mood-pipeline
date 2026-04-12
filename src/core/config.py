@@ -158,6 +158,14 @@ class ValidationConfig(BaseModel):
     min_semantic_coverage: float
 
 
+class ArchivingConfig(BaseModel):
+    enabled: bool = True
+    local_archive_dir: str = "archive"
+    gcs_enabled: bool = False
+    gcs_prefix: str = "runs"
+    local_retention_max_runs: int = 10  # 0 = keep all
+
+
 # ── Root config model ─────────────────────────────────────────────────────────
 
 class PipelineConfig(BaseModel):
@@ -174,6 +182,7 @@ class PipelineConfig(BaseModel):
     logging: LoggingConfig
     outputs: OutputsConfig
     validation: ValidationConfig
+    archiving: ArchivingConfig = ArchivingConfig()
 
     # API keys are loaded from environment, not from YAML.
     # They are attached to the config object after env loading.
