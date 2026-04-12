@@ -90,6 +90,14 @@ outputs:
   report_filename: "validation_report.md"
   analysis_filename: "analysis_{decade}.json"
 
+# ── Archiving ─────────────────────────────────────────────────────────────────
+archiving:
+  enabled: true
+  local_archive_dir: "archive"
+  gcs_enabled: true
+  gcs_prefix: "runs" # objects stored at gs://{bucket}/runs/{run_id}/
+  local_retention_max_runs: 10 # keep N most recent local archive entries; 0 = keep all
+
 # ── Validation thresholds ────────────────────────────────────────
 validation:
   min_lyrics_coverage: 0.85
