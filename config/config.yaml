@@ -66,7 +66,7 @@ cache:
 checkpoints:
   dir: "checkpoints"
   force_rerun:
-    s1_ingest: true
+    s1_ingest: false
     s2_lyrics: false
     s3_sentiment: false
     s3_mood: false
