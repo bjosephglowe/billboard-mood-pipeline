@@ -80,11 +80,12 @@ def compute_report_inputs(
     semantic_coverage = int(semantic_complete.sum()) / total if total else 0.0
 
     # ── Low-confidence theme rate ──
+    # Counts songs where theme classification failed entirely
+    # (theme_primary == "uncertain"). Songs classified via Haiku fallback
+    # carry valid theme labels and are NOT counted as low-confidence.
+    # Redefined per Issue 1 Option B — see build state snapshot.
     low_conf_theme = int(
-        (
-            (df["theme_flag"] == "haiku_fallback") |
-            (df["theme_primary"] == "uncertain")
-        ).sum()
+        (df["theme_primary"] == "uncertain").sum()
     )
     low_conf_theme_rate = low_conf_theme / total if total else 0.0
 

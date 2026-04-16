@@ -39,8 +39,10 @@ theme:
     min_confidence: 0.35
     # Note: threshold lowered from locked P2 value of 0.55 due to model
     # substitution. nli-MiniLM2-L6-H768 produces lower confidence scores
-    # than the original nli-MiniLM-L6-v2. low_confidence_theme_rate gate
-    # metric is not applicable under the replacement model distribution.
+    # than the original nli-MiniLM-L6-v2. Haiku fallback is now the primary
+    # classifier for most songs and is treated as a valid classification path,
+    # not a low-confidence signal. low_confidence_theme_rate now measures
+    # songs with theme_primary == "uncertain" only (Issue 1, Option B).
   haiku_fallback_enabled: true
   semantic_vector_enabled: false
 
