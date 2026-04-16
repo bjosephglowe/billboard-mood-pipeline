@@ -20,6 +20,7 @@ Covers:
   - run() returns dict with gate_pass key
   - checkpoint (report file) read path skips regeneration
 """
+import copy
 import json
 from pathlib import Path
 
@@ -256,6 +257,48 @@ class TestComputeReportInputs:
         inputs = compute_report_inputs(merged_df_full, minimal_config, "test_run")
         assert inputs["semantic_coverage_pct"] == pytest.approx(1.0, abs=0.001)
 
+    def test_low_conf_theme_rate_zero_when_all_haiku_fallback(self, minimal_config):
+        """
+        Songs classified via Haiku fallback (theme_flag=haiku_fallback) must
+        NOT count toward low_confidence_theme_rate. Only uncertain counts.
+        This is the core Issue 1 / Option B assertion.
+        """
+        rows = [
+            _make_merged_row(
+                f"song{i:016d}",
+                theme_primary="love_and_romance",  # valid label, not uncertain
+            )
+            for i in range(10)
+        ]
+        # Set all theme_flag to haiku_fallback — old metric would score 1.0
+        for row in rows:
+            row["theme_flag"] = "haiku_fallback"
+            row["theme_source"] = "haiku"
+        df = pd.DataFrame(rows)
+        inputs = compute_report_inputs(df, minimal_config, "test_run")
+        assert inputs["low_confidence_theme_rate"] == pytest.approx(0.0, abs=0.001)
+
+    def test_low_conf_theme_rate_counts_only_uncertain(self, minimal_config):
+        """
+        3 uncertain + 7 haiku-classified → rate = 0.30 (3/10).
+        Haiku-classified songs do not count regardless of theme_flag.
+        """
+        rows = []
+        for i in range(7):
+            row = _make_merged_row(f"song{i:016d}", theme_primary="love_and_romance")
+            row["theme_flag"] = "haiku_fallback"
+            row["theme_source"] = "haiku"
+            rows.append(row)
+        for i in range(7, 10):
+            row = _make_merged_row(f"song{i:016d}", theme_primary="uncertain",
+                                   record_complete=False)
+            row["theme_flag"] = None
+            row["theme_source"] = "uncertain"
+            rows.append(row)
+        df = pd.DataFrame(rows)
+        inputs = compute_report_inputs(df, minimal_config, "test_run")
+        assert inputs["low_confidence_theme_rate"] == pytest.approx(0.30, abs=0.001)
+
 
 # ── evaluate_gate ─────────────────────────────────────────────────────────────
 
@@ -476,22 +519,23 @@ class TestWriteNdjson:
 
 class TestRun:
     def _base_config(self, minimal_config, tmp_path):
-        minimal_config.checkpoints.dir = str(tmp_path / "checkpoints")
-        minimal_config.outputs.dir = str(tmp_path / "outputs")
-        minimal_config.outputs.viz_dir = str(tmp_path / "outputs" / "viz")
-        minimal_config.outputs.report_filename = "validation_report.md"
-        minimal_config.outputs.analysis_filename = "analysis_{decade}.json"
-        minimal_config.logging.missing_lyrics_log = str(
+        config = copy.deepcopy(minimal_config)
+        config.checkpoints.dir = str(tmp_path / "checkpoints")
+        config.outputs.dir = str(tmp_path / "outputs")
+        config.outputs.viz_dir = str(tmp_path / "outputs" / "viz")
+        config.outputs.report_filename = "validation_report.md"
+        config.outputs.analysis_filename = "analysis_{decade}.json"
+        config.logging.missing_lyrics_log = str(
             tmp_path / "missing_lyrics.jsonl"
         )
-        minimal_config.logging.low_confidence_log = str(
+        config.logging.low_confidence_log = str(
             tmp_path / "low_confidence.jsonl"
         )
-        Path(minimal_config.checkpoints.dir).mkdir(parents=True, exist_ok=True)
-        Path(minimal_config.outputs.dir).mkdir(parents=True, exist_ok=True)
-        Path(minimal_config.outputs.viz_dir).mkdir(parents=True, exist_ok=True)
-        minimal_config.checkpoints.force_rerun.s5_report = True
-        return minimal_config
+        Path(config.checkpoints.dir).mkdir(parents=True, exist_ok=True)
+        Path(config.outputs.dir).mkdir(parents=True, exist_ok=True)
+        Path(config.outputs.viz_dir).mkdir(parents=True, exist_ok=True)
+        config.checkpoints.force_rerun.s5_report = True
+        return config
 
     def test_returns_dict_with_gate_pass(
         self, minimal_config, tmp_path, merged_df_full
